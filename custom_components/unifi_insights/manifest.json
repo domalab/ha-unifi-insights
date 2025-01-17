@@ -1,0 +1,15 @@
+{
+    "domain": "unifi_insights",
+    "name": "UniFi Insights",
+    "codeowners": ["@domalab"],
+    "config_flow": true,
+    "dependencies": [],
+    "documentation": "https://github.com/domalab/ha-unifi-insights",
+    "homekit": {},
+    "iot_class": "local_polling",
+    "issue_tracker": "https://github.com/domalab/ha-unifi-insights/issues",
+    "requirements": [],
+    "ssdp": [],
+    "version": "1.0.0",
+    "zeroconf": []
+  }

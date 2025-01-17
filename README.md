@@ -19,13 +19,7 @@ This custom integration allows you to monitor your UniFi devices through the Uni
 
 ### HACS (Recommended)
 
-1. Open HACS in Home Assistant
-2. Click the three dots in the top right corner
-3. Select "Custom Repositories"
-4. Add this repository URL and select "Integration" as the category
-5. Click "Add"
-6. Find "UniFi Insights" in HACS and click "Download"
-7. Restart Home Assistant
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=domalab&repository=ha-unifi-insights&category=integration)
 
 ### Manual Installation
 

@@ -56,59 +56,19 @@
     "entity": {
         "sensor": {
             "cpu_usage": {
-                "name": "CPU Usage",
-                "state_attributes": {
-                    "state_class": {
-                        "value": "measurement"
-                    },
-                    "unit_of_measurement": {
-                        "value": "%"
-                    }
-                }
+                "name": "CPU Usage"
             },
             "memory_usage": {
-                "name": "Memory Usage",
-                "state_attributes": {
-                    "state_class": {
-                        "value": "measurement"
-                    },
-                    "unit_of_measurement": {
-                        "value": "%"
-                    }
-                }
+                "name": "Memory Usage"
             },
             "uptime": {
-                "name": "Uptime",
-                "state_attributes": {
-                    "state_class": {
-                        "value": "total_increasing"
-                    },
-                    "unit_of_measurement": {
-                        "value": "s"
-                    }
-                }
+                "name": "Uptime"
             },
             "tx_rate": {
-                "name": "Transmit Rate",
-                "state_attributes": {
-                    "state_class": {
-                        "value": "measurement"
-                    },
-                    "unit_of_measurement": {
-                        "value": "B/s"
-                    }
-                }
+                "name": "Transmit Rate"
             },
             "rx_rate": {
-                "name": "Receive Rate",
-                "state_attributes": {
-                    "state_class": {
-                        "value": "measurement"
-                    },
-                    "unit_of_measurement": {
-                        "value": "B/s"
-                    }
-                }
+                "name": "Receive Rate"
             }
         },
         "binary_sensor": {

@@ -58,36 +58,56 @@
             "cpu_usage": {
                 "name": "CPU Usage",
                 "state_attributes": {
-                    "state_class": "measurement",
-                    "unit_of_measurement": "%"
+                    "state_class": {
+                        "value": "measurement"
+                    },
+                    "unit_of_measurement": {
+                        "value": "%"
+                    }
                 }
             },
             "memory_usage": {
                 "name": "Memory Usage",
                 "state_attributes": {
-                    "state_class": "measurement",
-                    "unit_of_measurement": "%"
+                    "state_class": {
+                        "value": "measurement"
+                    },
+                    "unit_of_measurement": {
+                        "value": "%"
+                    }
                 }
             },
             "uptime": {
                 "name": "Uptime",
                 "state_attributes": {
-                    "state_class": "total_increasing",
-                    "unit_of_measurement": "s"
+                    "state_class": {
+                        "value": "total_increasing"
+                    },
+                    "unit_of_measurement": {
+                        "value": "s"
+                    }
                 }
             },
             "tx_rate": {
                 "name": "Transmit Rate",
                 "state_attributes": {
-                    "state_class": "measurement",
-                    "unit_of_measurement": "B/s"
+                    "state_class": {
+                        "value": "measurement"
+                    },
+                    "unit_of_measurement": {
+                        "value": "B/s"
+                    }
                 }
             },
             "rx_rate": {
                 "name": "Receive Rate",
                 "state_attributes": {
-                    "state_class": "measurement",
-                    "unit_of_measurement": "B/s"
+                    "state_class": {
+                        "value": "measurement"
+                    },
+                    "unit_of_measurement": {
+                        "value": "B/s"
+                    }
                 }
             }
         },

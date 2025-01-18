@@ -31,6 +31,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                     hass=self.hass,
                     api_key=user_input[CONF_API_KEY],
                     host=user_input.get(CONF_HOST, DEFAULT_API_HOST),
+                    verify_ssl=False,
                 )
                 
                 # Validate the API key
@@ -59,6 +60,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_API_KEY): str,
                     vol.Optional(CONF_HOST, default=DEFAULT_API_HOST): str,
+                    vol.Optional("verify_ssl", default=False): bool,
                 }
             ),
             errors=errors,

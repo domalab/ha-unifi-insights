@@ -2,20 +2,21 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
 
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.const import CONF_API_KEY, CONF_HOST, Platform
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ConfigEntryAuthFailed, ConfigEntryNotReady
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
 
 from .api import (
     UnifiInsightsClient,
     UnifiInsightsAuthError,
     UnifiInsightsConnectionError,
 )
-from .const import DEFAULT_API_HOST, DOMAIN
+from .const import (
+    DOMAIN,
+    DEFAULT_API_HOST,
+)
 from .coordinator import UnifiInsightsDataUpdateCoordinator
 from .services import async_setup_services, async_unload_services
 
@@ -57,6 +58,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
             hass=hass,
             api_key=entry.data[CONF_API_KEY],
             host=entry.data.get(CONF_HOST, DEFAULT_API_HOST),
+            verify_ssl=False,
         )
 
         # Verify we can authenticate

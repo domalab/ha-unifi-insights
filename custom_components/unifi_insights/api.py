@@ -2,14 +2,13 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import logging
-from datetime import datetime
 from typing import Any
 
-from aiohttp import ClientError, ClientResponse, ClientSession
+from aiohttp import ClientError, ClientSession
 from homeassistant.core import HomeAssistant
-from homeassistant.exceptions import ConfigEntryAuthFailed
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.helpers.aiohttp_client import async_create_clientsession
 
 from .const import DEFAULT_API_HOST, UNIFI_API_HEADERS
 
@@ -37,15 +36,30 @@ class UnifiInsightsClient:
         api_key: str,
         host: str = DEFAULT_API_HOST,
         session: ClientSession | None = None,
+        verify_ssl: bool = False,
     ) -> None:
         """Initialize the API client."""
         _LOGGER.debug("Initializing UniFi Insights API client with host: %s", host)
         self._hass = hass
         self._api_key = api_key
         self._host = host
-        self._session = session or async_get_clientsession(hass)
+        self._verify_ssl = verify_ssl
+        
+        if session:
+            self._session = session
+        else:
+            self._session = async_create_clientsession(
+                hass,
+                verify_ssl=verify_ssl,
+            )
+        
         self._request_lock = asyncio.Lock()
         _LOGGER.info("UniFi Insights API client initialized")
+
+    @property
+    def host(self) -> str:
+        """Return the host address for the UniFi Insights system."""
+        return self._host
 
     async def _request(
         self,
@@ -61,7 +75,6 @@ class UnifiInsightsClient:
             }
 
             if "headers" in kwargs:
-                _LOGGER.debug("Additional headers provided for request")
                 headers.update(kwargs.pop("headers"))
 
             url = f"{self._host}/proxy/network/integration{endpoint}"
@@ -69,7 +82,7 @@ class UnifiInsightsClient:
 
             try:
                 async with self._session.request(
-                    method, url, headers=headers, **kwargs
+                    method, url, headers=headers, ssl=self._verify_ssl, **kwargs
                 ) as resp:
                     _LOGGER.debug(
                         "Response received from %s - Status: %s",
@@ -77,21 +90,41 @@ class UnifiInsightsClient:
                         resp.status
                     )
 
-                    if resp.status == 401:
-                        _LOGGER.error("Authentication failed - invalid API key")
-                        raise UnifiInsightsAuthError("Invalid API key")
-                    
-                    if resp.status == 403:
-                        _LOGGER.error("Authorization failed - API key lacks permission")
-                        raise UnifiInsightsAuthError("API key lacks permission")
+                    # Log raw response for debugging
+                    try:
+                        raw_data = await resp.text()
+                        _LOGGER.debug("Raw response data: %s", raw_data)
+                    except Exception as err:
+                        _LOGGER.debug("Could not log raw response: %s", err)
 
+                    if resp.status == 401:
+                        raise UnifiInsightsAuthError("Invalid API key")
+                    elif resp.status == 403:
+                        raise UnifiInsightsAuthError("API key lacks permission")
+                    elif resp.status == 404:
+                        raise UnifiInsightsConnectionError(
+                            f"Endpoint not found: {endpoint}"
+                        )
+                    elif resp.status >= 500:
+                        raise UnifiInsightsConnectionError(
+                            f"Server error: {resp.status}"
+                        )
+                    
                     resp.raise_for_status()
-                    response_data = await resp.json()
-                    _LOGGER.debug(
-                        "Successfully processed response from %s", 
-                        endpoint
-                    )
-                    return response_data
+                    
+                    try:
+                        response_data = await resp.json()
+                        _LOGGER.debug(
+                            "Processed response from %s: %s", 
+                            endpoint,
+                            json.dumps(response_data, indent=2)
+                        )
+                        return response_data
+                    except ValueError as err:
+                        _LOGGER.error("Failed to parse JSON response: %s", err)
+                        raise UnifiInsightsConnectionError(
+                            "Invalid JSON response"
+                        ) from err
 
             except asyncio.TimeoutError as err:
                 _LOGGER.error("Request timed out for %s: %s", url, err)
@@ -110,10 +143,26 @@ class UnifiInsightsClient:
         try:
             response = await self._request("GET", "/v1/sites")
             sites = response.get("data", [])
+            
+            # Log sites data
+            _LOGGER.debug(
+                "Sites data structure:\n%s",
+                json.dumps([{
+                    "id": site.get("id"),
+                    "name": site.get("name"),
+                    "description": site.get("description"),
+                    "meta": site.get("meta", {})
+                } for site in sites], indent=2)
+            )
+            
             _LOGGER.info("Successfully retrieved %d sites", len(sites))
             return sites
         except Exception as err:
-            _LOGGER.error("Failed to fetch sites: %s", err)
+            _LOGGER.error(
+                "Failed to fetch sites: %s",
+                err,
+                exc_info=True
+            )
             raise
 
     async def async_get_devices(self, site_id: str) -> list[dict[str, Any]]:
@@ -122,6 +171,27 @@ class UnifiInsightsClient:
         try:
             response = await self._request("GET", f"/v1/sites/{site_id}/devices")
             devices = response.get("data", [])
+            
+            # Log each device's data structure
+            for device in devices:
+                _LOGGER.debug(
+                    "Device data structure for %s:\n%s",
+                    device.get("name", "Unknown"),
+                    json.dumps(
+                        {
+                            "name": device.get("name"),
+                            "model": device.get("model"),
+                            "mac": device.get("macAddress"),
+                            "ip": device.get("ipAddress"),
+                            "state": device.get("state"),
+                            "features": device.get("features", []),
+                            "port_table": device.get("port_table", []),
+                            "radio_table": device.get("radio_table", [])
+                        },
+                        indent=2
+                    )
+                )
+
             _LOGGER.info(
                 "Successfully retrieved %d devices for site %s",
                 len(devices),
@@ -129,7 +199,39 @@ class UnifiInsightsClient:
             )
             return devices
         except Exception as err:
-            _LOGGER.error("Failed to fetch devices for site %s: %s", site_id, err)
+            _LOGGER.error(
+                "Failed to fetch devices for site %s: %s",
+                site_id,
+                err,
+                exc_info=True
+            )
+            raise
+
+    async def async_get_device_info(self, site_id: str, device_id: str) -> dict[str, Any]:
+        """Get detailed device information."""
+        _LOGGER.debug(
+            "Fetching device info for device %s in site %s",
+            device_id,
+            site_id
+        )
+        try:
+            response = await self._request(
+                "GET", 
+                f"/v1/sites/{site_id}/devices/{device_id}"
+            )
+            _LOGGER.debug(
+                "Device info for %s: %s",
+                device_id,
+                json.dumps(response, indent=2)
+            )
+            return response
+        except Exception as err:
+            _LOGGER.error(
+                "Failed to fetch device info for device %s in site %s: %s",
+                device_id,
+                site_id,
+                err
+            )
             raise
 
     async def async_get_device_stats(
@@ -146,35 +248,69 @@ class UnifiInsightsClient:
                 "GET",
                 f"/v1/sites/{site_id}/devices/{device_id}/statistics/latest"
             )
-            _LOGGER.info(
-                "Successfully retrieved stats for device %s in site %s",
+            
+            # Log complete statistics data
+            _LOGGER.debug(
+                "Complete statistics for device %s: %s",
                 device_id,
-                site_id
+                json.dumps(response, indent=2)
             )
+
             return response
         except Exception as err:
             _LOGGER.error(
                 "Failed to fetch stats for device %s in site %s: %s",
                 device_id,
                 site_id,
-                err
+                err,
+                exc_info=True
             )
             raise
 
-    async def async_get_clients(self, site_id: str) -> list[dict[str, Any]]:
-        """Get all clients for a site."""
-        _LOGGER.debug("Fetching clients for site %s", site_id)
+    async def async_get_clients(
+        self, 
+        site_id: str, 
+        offset: int = 0, 
+        limit: int = 25
+    ) -> list[dict[str, Any]]:
+        """Get all clients for a site with pagination."""
+        _LOGGER.debug(
+            "Fetching clients for site %s (offset: %d, limit: %d)",
+            site_id,
+            offset,
+            limit
+        )
         try:
-            response = await self._request("GET", f"/v1/sites/{site_id}/clients")
+            response = await self._request(
+                "GET", 
+                f"/v1/sites/{site_id}/clients",
+                params={"offset": offset, "limit": limit}
+            )
             clients = response.get("data", [])
-            _LOGGER.info(
-                "Successfully retrieved %d clients for site %s",
+            total_count = response.get("totalCount", 0)
+            
+            # If we have more clients than our current limit, fetch the rest
+            if total_count > offset + limit:
+                next_offset = offset + limit
+                more_clients = await self.async_get_clients(
+                    site_id, 
+                    offset=next_offset, 
+                    limit=limit
+                )
+                clients.extend(more_clients)
+            
+            _LOGGER.debug(
+                "Retrieved %d clients for site %s",
                 len(clients),
                 site_id
             )
             return clients
         except Exception as err:
-            _LOGGER.error("Failed to fetch clients for site %s: %s", site_id, err)
+            _LOGGER.error(
+                "Failed to fetch clients for site %s: %s",
+                site_id,
+                err
+            )
             raise
 
     async def async_restart_device(self, site_id: str, device_id: str) -> bool:

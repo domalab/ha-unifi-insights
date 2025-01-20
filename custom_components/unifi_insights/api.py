@@ -4,7 +4,8 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-from typing import Any
+from datetime import datetime, timedelta
+from typing import Any, Callable
 
 from aiohttp import ClientError, ClientSession
 from homeassistant.core import HomeAssistant
@@ -25,6 +26,69 @@ class UnifiInsightsAuthError(UnifiInsightsError):
 
 class UnifiInsightsConnectionError(UnifiInsightsError):
     """Connection error."""
+
+
+class UnifiInsightsBackoff:
+    """Class to implement exponential backoff."""
+
+    def __init__(
+        self,
+        base_delay: float = 1.0,
+        max_delay: float = 10.0,
+        max_retries: int = 3,
+    ):
+        """Initialize backoff."""
+        self._base_delay = base_delay
+        self._max_delay = max_delay
+        self._max_retries = max_retries
+        self._tries = 0
+
+    async def execute(self, func: Callable, *args: Any, **kwargs: Any) -> Any:
+        """Execute function with backoff."""
+        while True:
+            try:
+                return await func(*args, **kwargs)
+            except Exception as err:  # pylint: disable=broad-except
+                self._tries += 1
+                if self._tries >= self._max_retries:
+                    raise
+
+                delay = min(
+                    self._base_delay * (2 ** (self._tries - 1)),
+                    self._max_delay,
+                )
+                _LOGGER.debug(
+                    "Retrying %s in %.1f seconds after error: %s",
+                    func.__name__,
+                    delay,
+                    err,
+                )
+                await asyncio.sleep(delay)
+
+
+class UnifiInsightsRequestCache:
+    """Cache for API requests."""
+
+    def __init__(self, ttl: timedelta = timedelta(minutes=5)):
+        """Initialize cache."""
+        self._cache = {}
+        self._ttl = ttl
+
+    def get(self, key: str) -> Any | None:
+        """Get item from cache."""
+        if key not in self._cache:
+            return None
+
+        data, timestamp = self._cache[key]
+        if datetime.now() - timestamp > self._ttl:
+            del self._cache[key]
+            return None
+
+        return data
+
+    def set(self, key: str, value: Any) -> None:
+        """Set item in cache."""
+        self._cache[key] = (value, datetime.now())
 
 
 class UnifiInsightsClient:
@@ -54,6 +118,8 @@ class UnifiInsightsClient:
             )
         
         self._request_lock = asyncio.Lock()
+        self._backoff = UnifiInsightsBackoff()
+        self._cache = UnifiInsightsRequestCache()
         _LOGGER.info("UniFi Insights API client initialized")
 
     @property
@@ -65,83 +131,98 @@ class UnifiInsightsClient:
         self,
         method: str,
         endpoint: str,
+        use_cache: bool = False,
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Make an API request."""
-        async with self._request_lock:
-            headers = {
-                **UNIFI_API_HEADERS,
-                "X-API-Key": self._api_key,
-            }
+        cache_key = f"{method}_{endpoint}_{str(kwargs)}" if use_cache else None
+        
+        if use_cache:
+            cached = self._cache.get(cache_key)
+            if cached is not None:
+                return cached
 
-            if "headers" in kwargs:
-                headers.update(kwargs.pop("headers"))
+        async def _do_request() -> dict[str, Any]:
+            async with self._request_lock:
+                headers = {
+                    **UNIFI_API_HEADERS,
+                    "X-API-Key": self._api_key,
+                }
 
-            url = f"{self._host}/proxy/network/integration{endpoint}"
-            _LOGGER.debug("Making %s request to %s", method, url)
+                if "headers" in kwargs:
+                    headers.update(kwargs.pop("headers"))
 
-            try:
-                async with self._session.request(
-                    method, url, headers=headers, ssl=self._verify_ssl, **kwargs
-                ) as resp:
-                    _LOGGER.debug(
-                        "Response received from %s - Status: %s",
-                        endpoint,
-                        resp.status
-                    )
+                url = f"{self._host}/proxy/network/integration{endpoint}"
+                _LOGGER.debug("Making %s request to %s", method, url)
 
-                    # Log raw response for debugging
-                    try:
-                        raw_data = await resp.text()
-                        _LOGGER.debug("Raw response data: %s", raw_data)
-                    except Exception as err:
-                        _LOGGER.debug("Could not log raw response: %s", err)
-
-                    if resp.status == 401:
-                        raise UnifiInsightsAuthError("Invalid API key")
-                    elif resp.status == 403:
-                        raise UnifiInsightsAuthError("API key lacks permission")
-                    elif resp.status == 404:
-                        raise UnifiInsightsConnectionError(
-                            f"Endpoint not found: {endpoint}"
-                        )
-                    elif resp.status >= 500:
-                        raise UnifiInsightsConnectionError(
-                            f"Server error: {resp.status}"
-                        )
-                    
-                    resp.raise_for_status()
-                    
-                    try:
-                        response_data = await resp.json()
+                try:
+                    async with self._session.request(
+                        method, url, headers=headers, ssl=self._verify_ssl, **kwargs
+                    ) as resp:
                         _LOGGER.debug(
-                            "Processed response from %s: %s", 
+                            "Response received from %s - Status: %s",
                             endpoint,
-                            json.dumps(response_data, indent=2)
+                            resp.status
                         )
-                        return response_data
-                    except ValueError as err:
-                        _LOGGER.error("Failed to parse JSON response: %s", err)
-                        raise UnifiInsightsConnectionError(
-                            "Invalid JSON response"
-                        ) from err
 
-            except asyncio.TimeoutError as err:
-                _LOGGER.error("Request timed out for %s: %s", url, err)
-                raise UnifiInsightsConnectionError(
-                    f"Timeout connecting to {url}"
-                ) from err
-            except ClientError as err:
-                _LOGGER.error("Connection error for %s: %s", url, err)
-                raise UnifiInsightsConnectionError(
-                    f"Error connecting to {url}: {err}"
-                ) from err
+                        # Log raw response for debugging
+                        try:
+                            raw_data = await resp.text()
+                            _LOGGER.debug("Raw response data: %s", raw_data)
+                        except Exception as err:
+                            _LOGGER.debug("Could not log raw response: %s", err)
+
+                        if resp.status == 401:
+                            raise UnifiInsightsAuthError("Invalid API key")
+                        elif resp.status == 403:
+                            raise UnifiInsightsAuthError("API key lacks permission")
+                        elif resp.status == 404:
+                            raise UnifiInsightsConnectionError(
+                                f"Endpoint not found: {endpoint}"
+                            )
+                        elif resp.status >= 500:
+                            raise UnifiInsightsConnectionError(
+                                f"Server error: {resp.status}"
+                            )
+                        
+                        resp.raise_for_status()
+                        
+                        try:
+                            response_data = await resp.json()
+                            _LOGGER.debug(
+                                "Processed response from %s: %s", 
+                                endpoint,
+                                json.dumps(response_data, indent=2)
+                            )
+
+                            if use_cache and cache_key:
+                                self._cache.set(cache_key, response_data)
+
+                            return response_data
+                        except ValueError as err:
+                            _LOGGER.error("Failed to parse JSON response: %s", err)
+                            raise UnifiInsightsConnectionError(
+                                "Invalid JSON response"
+                            ) from err
+
+                except asyncio.TimeoutError as err:
+                    _LOGGER.error("Request timed out for %s: %s", url, err)
+                    raise UnifiInsightsConnectionError(
+                        f"Timeout connecting to {url}"
+                    ) from err
+                except ClientError as err:
+                    _LOGGER.error("Connection error for %s: %s", url, err)
+                    raise UnifiInsightsConnectionError(
+                        f"Error connecting to {url}: {err}"
+                    ) from err
+
+        return await self._backoff.execute(_do_request)
 
     async def async_get_sites(self) -> list[dict[str, Any]]:
         """Get all sites."""
         _LOGGER.debug("Fetching all sites")
         try:
-            response = await self._request("GET", "/v1/sites")
+            response = await self._request("GET", "/v1/sites", use_cache=True)
             sites = response.get("data", [])
             
             # Log sites data

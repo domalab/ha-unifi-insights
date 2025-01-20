@@ -1,6 +1,7 @@
 """Data update coordinator for UniFi Insights."""
 from __future__ import annotations
 
+import asyncio
 import logging
 from datetime import datetime
 from typing import Any
@@ -64,6 +65,77 @@ class UnifiInsightsDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
         """Get device statistics by site ID and device ID."""
         return self.data.get("stats", {}).get(site_id, {}).get(device_id)
 
+    async def _process_device(
+        self, site_id: str, device: dict[str, Any], clients: list[dict[str, Any]]
+    ) -> tuple[str, dict[str, Any], dict[str, Any]]:
+        """Process a single device and its stats."""
+        device_id = device["id"]
+        device_name = device.get("name", device_id)
+
+        try:
+            # Get device info and stats in parallel
+            info_task = self.api.async_get_device_info(site_id, device_id)
+            stats_task = self.api.async_get_device_stats(site_id, device_id)
+            device_info, stats = await asyncio.gather(info_task, stats_task)
+
+            # Update device info
+            device.update(device_info)
+
+            # Add client data and device info to stats
+            if stats is not None:
+                stats["clients"] = [
+                    c for c in clients if c.get("uplinkDeviceId") == device_id
+                ]
+                stats["id"] = device_id
+            else:
+                stats = {}
+
+            return device_id, device, stats
+
+        except Exception as err:
+            _LOGGER.error(
+                "Error processing device %s (%s): %s",
+                device_name,
+                device_id,
+                err
+            )
+            return device_id, device, {}
+
+    async def _process_site(self, site_id: str) -> tuple[list[dict[str, Any]], dict[str, Any], dict[str, Any]] | None:
+        """Process a single site's devices and clients."""
+        try:
+            # Get devices and clients in parallel
+            devices_task = self.api.async_get_devices(site_id)
+            clients_task = self.api.async_get_clients(site_id)
+            devices, clients = await asyncio.gather(devices_task, clients_task)
+
+            # Process devices in parallel
+            tasks = [
+                self._process_device(site_id, device, clients)
+                for device in devices
+            ]
+            results = await asyncio.gather(*tasks)
+
+            # Organize results
+            devices_dict = {}
+            stats_dict = {}
+            for device_id, device, stats in results:
+                devices_dict[device_id] = device
+                stats_dict[device_id] = stats
+
+            clients_dict = {client["id"]: client for client in clients}
+
+            return devices_dict, stats_dict, clients_dict
+
+        except Exception as err:
+            _LOGGER.error(
+                "Error processing site %s: %s",
+                site_id,
+                err,
+                exc_info=True
+            )
+            return None
+
     async def _async_update_data(self) -> dict[str, Any]:
         """Fetch data from API."""
         try:
@@ -71,80 +143,26 @@ class UnifiInsightsDataUpdateCoordinator(DataUpdateCoordinator[dict[str, Any]]):
             sites = await self.api.async_get_sites()
             self.data["sites"] = {site["id"]: site for site in sites}
 
-            # For each site, get devices and clients
-            for site_id in self.data["sites"]:
-                try:
-                    # Get devices first
-                    devices = await self.api.async_get_devices(site_id)
-                    self.data["devices"][site_id] = {}
-                    self.data["stats"][site_id] = {}
+            # Process all sites in parallel
+            tasks = [
+                self._process_site(site_id) for site_id in self.data["sites"]
+            ]
+            results = await asyncio.gather(*tasks)
 
-                    # Get clients next
-                    clients = await self.api.async_get_clients(site_id)
-                    self.data["clients"][site_id] = {
-                        client["id"]: client for client in clients
-                    }
-
-                    # Process each device
-                    for device in devices:
-                        device_id = device["id"]
-                        device_name = device.get("name", device_id)
-
-                        # Get device info to include firmware version
-                        try:
-                            device_info = await self.api.async_get_device_info(
-                                site_id,
-                                device_id
-                            )
-                            device.update(device_info)
-                        except Exception as err:
-                            _LOGGER.error(
-                                "Error getting device info for %s (%s): %s",
-                                device_name,
-                                device_id,
-                                err
-                            )
-
-                        # Store device data
-                        self.data["devices"][site_id][device_id] = device
-
-                        # Get and store device stats
-                        try:
-                            stats = await self.api.async_get_device_stats(
-                                site_id,
-                                device_id
-                            )
-                            # Add client data and device info to stats
-                            stats["clients"] = [
-                                c for c in clients 
-                                if c.get("uplinkDeviceId") == device_id
-                            ]
-                            stats["id"] = device_id
-                            self.data["stats"][site_id][device_id] = stats
-                        except Exception as err:
-                            _LOGGER.error(
-                                "Error getting stats for device %s (%s): %s",
-                                device_name,
-                                device_id,
-                                err
-                            )
-                            self.data["stats"][site_id][device_id] = {}
+            # Update data structure with results
+            for site_id, result in zip(self.data["sites"], results):
+                if result is not None:
+                    devices_dict, stats_dict, clients_dict = result
+                    self.data["devices"][site_id] = devices_dict
+                    self.data["stats"][site_id] = stats_dict
+                    self.data["clients"][site_id] = clients_dict
 
                     _LOGGER.debug(
                         "Successfully processed site %s with %d devices and %d clients",
                         site_id,
-                        len(devices),
-                        len(clients)
+                        len(devices_dict),
+                        len(clients_dict)
                     )
-
-                except Exception as err:
-                    _LOGGER.error(
-                        "Error processing site %s: %s",
-                        site_id,
-                        err,
-                        exc_info=True
-                    )
-                    continue
 
             self._available = True
             self.data["last_update"] = datetime.now()

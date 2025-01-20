@@ -6,8 +6,7 @@ from typing import Any
 
 import voluptuous as vol
 from homeassistant.config_entries import ConfigFlow, ConfigFlowResult
-from homeassistant.const import CONF_API_KEY, CONF_HOST
-from homeassistant.helpers.aiohttp_client import async_get_clientsession
+from homeassistant.const import CONF_API_KEY, CONF_HOST, CONF_VERIFY_SSL
 
 from .api import UnifiInsightsClient, UnifiInsightsAuthError, UnifiInsightsConnectionError
 from .const import DEFAULT_API_HOST, DOMAIN
@@ -31,7 +30,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                     hass=self.hass,
                     api_key=user_input[CONF_API_KEY],
                     host=user_input.get(CONF_HOST, DEFAULT_API_HOST),
-                    verify_ssl=False,
+                    verify_ssl=user_input.get(CONF_VERIFY_SSL, False),
                 )
                 
                 # Validate the API key
@@ -41,7 +40,11 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                     
                     return self.async_create_entry(
                         title="UniFi Insights",
-                        data=user_input,
+                        data={
+                            CONF_API_KEY: user_input[CONF_API_KEY],
+                            CONF_HOST: user_input.get(CONF_HOST, DEFAULT_API_HOST),
+                            CONF_VERIFY_SSL: user_input.get(CONF_VERIFY_SSL, False),
+                        },
                     )
                 
                 errors[CONF_API_KEY] = "invalid_auth"
@@ -60,7 +63,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                 {
                     vol.Required(CONF_API_KEY): str,
                     vol.Optional(CONF_HOST, default=DEFAULT_API_HOST): str,
-                    vol.Optional("verify_ssl", default=False): bool,
+                    vol.Optional(CONF_VERIFY_SSL, default=False): bool,
                 }
             ),
             errors=errors,
@@ -82,6 +85,7 @@ class UnifiInsightsConfigFlow(ConfigFlow, domain=DOMAIN):
                     hass=self.hass,
                     api_key=user_input[CONF_API_KEY],
                     host=self.entry.data.get(CONF_HOST, DEFAULT_API_HOST),
+                    verify_ssl=self.entry.data.get(CONF_VERIFY_SSL, False),
                 )
 
                 if await api.async_validate_api_key():

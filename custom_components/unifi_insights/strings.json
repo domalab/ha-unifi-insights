@@ -80,7 +80,7 @@
                 }
             }
         },
-        "switch": {
+        "button": {
             "device_restart": {
                 "name": "Device Restart"
             }

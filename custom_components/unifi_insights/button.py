@@ -1,13 +1,12 @@
-"""Support for UniFi Insights switches."""
+"""Support for UniFi Insights buttons."""
 from __future__ import annotations
 
 import logging
 from dataclasses import dataclass
-from typing import Any
 
-from homeassistant.components.switch import (
-    SwitchEntity,
-    SwitchEntityDescription,
+from homeassistant.components.button import (
+    ButtonEntity,
+    ButtonEntityDescription,
 )
 from homeassistant.config_entries import ConfigEntry
 from homeassistant.core import HomeAssistant
@@ -21,14 +20,14 @@ _LOGGER = logging.getLogger(__name__)
 
 
 @dataclass
-class UnifiInsightsSwitchEntityDescription(SwitchEntityDescription):
-    """Class describing UniFi Insights switch entities."""
+class UnifiInsightsButtonEntityDescription(ButtonEntityDescription):
+    """Class describing UniFi Insights button entities."""
 
 
-SWITCH_TYPES: tuple[UnifiInsightsSwitchEntityDescription, ...] = (
-    UnifiInsightsSwitchEntityDescription(
+BUTTON_TYPES: tuple[UnifiInsightsButtonEntityDescription, ...] = (
+    UnifiInsightsButtonEntityDescription(
         key="device_restart",
-        translation_key="device_restart",  # Added translation key
+        translation_key="device_restart",
         name="Device Restart",
         icon="mdi:restart",
     ),
@@ -40,13 +39,13 @@ async def async_setup_entry(
     config_entry: ConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    """Set up switches for UniFi Insights integration."""
+    """Set up buttons for UniFi Insights integration."""
     coordinator: UnifiInsightsDataUpdateCoordinator = hass.data[DOMAIN][config_entry.entry_id]
     entities = []
 
-    _LOGGER.debug("Setting up switches for UniFi Insights")
+    _LOGGER.debug("Setting up buttons for UniFi Insights")
 
-    # Add switches for each device in each site
+    # Add buttons for each device in each site
     for site_id, devices in coordinator.data["devices"].items():
         site_data = coordinator.get_site(site_id)
         site_name = site_data.get("meta", {}).get("name", site_id) if site_data else site_id
@@ -63,16 +62,16 @@ async def async_setup_entry(
             device_name = device_data.get("name", device_id)
             
             _LOGGER.debug(
-                "Creating switches for device %s (%s) in site %s (%s)",
+                "Creating buttons for device %s (%s) in site %s (%s)",
                 device_id,
                 device_name,
                 site_id,
                 site_name
             )
             
-            for description in SWITCH_TYPES:
+            for description in BUTTON_TYPES:
                 entities.append(
-                    UnifiInsightsSwitch(
+                    UnifiInsightsButton(
                         coordinator=coordinator,
                         description=description,
                         site_id=site_id,
@@ -80,34 +79,34 @@ async def async_setup_entry(
                     )
                 )
 
-    _LOGGER.info("Adding %d UniFi Insights switches", len(entities))
+    _LOGGER.info("Adding %d UniFi Insights buttons", len(entities))
     async_add_entities(entities)
 
 
-class UnifiInsightsSwitch(UnifiInsightsEntity, SwitchEntity):
-    """Representation of a UniFi Insights Switch."""
+class UnifiInsightsButton(UnifiInsightsEntity, ButtonEntity):
+    """Representation of a UniFi Insights Button."""
 
-    entity_description: UnifiInsightsSwitchEntityDescription
+    entity_description: UnifiInsightsButtonEntityDescription
 
     def __init__(
         self,
         coordinator: UnifiInsightsDataUpdateCoordinator,
-        description: UnifiInsightsSwitchEntityDescription,
+        description: UnifiInsightsButtonEntityDescription,
         site_id: str,
         device_id: str,
     ) -> None:
-        """Initialize the switch."""
+        """Initialize the button."""
         super().__init__(coordinator, description, site_id, device_id)
         
         _LOGGER.debug(
-            "Initializing switch %s for device %s in site %s",
+            "Initializing button %s for device %s in site %s",
             description.key,
             device_id,
             site_id
         )
 
-    async def async_turn_on(self, **kwargs: Any) -> None:
-        """Turn the switch on (restart device)."""
+    async def async_press(self) -> None:
+        """Handle the button press."""
         _LOGGER.debug(
             "Restarting device %s (%s) in site %s",
             self._device_id,
@@ -138,17 +137,6 @@ class UnifiInsightsSwitch(UnifiInsightsEntity, SwitchEntity):
                 self._site_id,
                 err
             )
-
-    async def async_turn_off(self, **kwargs: Any) -> None:
-        """Turn the switch off (no-op for restart switch)."""
-        # Restart switch is momentary, so turn_off does nothing
-        pass
-
-    @property
-    def is_on(self) -> bool:
-        """Return true if the switch is on."""
-        # Restart switch is never "on"
-        return False
 
     @property
     def available(self) -> bool:
